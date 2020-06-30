@@ -83,9 +83,9 @@ fi
 
 # Instaling Torcs itself
 echo "Installing Torcs"
-git clone https://github.com/dosssman/gym_torqs.git
+git clone https://github.com/BBDrive/gym_torqs.git
 cd gym_torqs
-git checkout torqs_raceconfig
+git checkout torcs_raceconfig
 git reset --hard 1283706db42d8a4c1af5558644ed0114595bd51d
 cd vtorcs-RL-color
 ./configure

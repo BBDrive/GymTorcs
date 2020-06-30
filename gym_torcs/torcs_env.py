@@ -14,13 +14,35 @@ import psutil
 import time
 import math
 import random
+import warnings
 from xml.etree import ElementTree as ET
 
 DEF_BOX_DTYPE = np.float32
 
+'''
+Obesevation List
+| focus                  | (0,200)    | 5个测距传感器的矢量：每个传感器返回赛道边缘和汽车之间200m范围内的距离
+| speedX, speedY, speedZ | (-300,300)    | 沿X(车辆行驶方向),Y,Z轴的速度
+| angle                  | (-pi,pi)   | 汽车方向和道路的夹角
+| damage                 | (0,10000)  | 车辆受损程度,值越大受损越严重
+| opponents              | (0,200)    | 36个传感器：每个传感器覆盖10度,200m内最近对手距离
+| rpm                    | (0,10000)  | 汽车发动机每分钟转速
+| track                  | (0,200)    | 19个测距传感器：每个传感器返回200m范围内车和道路边缘的距离
+| trackPos               | (-1,1)     | 车和道路轴之间的距离,大于1或小于1表示跑出赛道  
+| wheelSpinval           | (0,100)    | 4个转速传感器
+| lap                    | (0, 100)   | 当前圈数
+| image                  | (0,255)    | 图像值
+
+Action List
+| steer(必选)            | (-1,1)         | 方向盘
+| throttle(可选)         | (-1,1)         | 油门
+| gear_change(可选)      | {-1,0,1,...,6} | 档位
+
+'''
+
 class TorcsEnv( gym.Env):
-    terminal_judge_start = 50.  # Speed limit is applied after this step
-    termination_limit_progress = 1  # [km/h], episode terminates if car is running slower than this limit
+    terminal_judge_start = 100.  # Speed limit is applied after this step
+    termination_limit_progress = 5  # [km/h], episode terminates if car is running slower than this limit
     default_speed = 300.
 
     initial_reset = True
@@ -33,7 +55,8 @@ class TorcsEnv( gym.Env):
         race_speed=1.0,
         rendering=True,
         damage=False,
-        lap_limiter=1,
+        lap_limiter=None,
+        step_limiter=None,
         recdata=False,
         noisy=False,
         rec_episode_limit=1,
@@ -114,10 +137,12 @@ class TorcsEnv( gym.Env):
         else:
             # TODO Add assertiong to check that the passed obs_vars are actually valid
             if (not vision and 'img' in obs_vars):
-                print( "WARNING: Vision disabled but included in custon observation variables.")
+                warnings.warn("Vision disabled but included in custom observation variables.")
+                # print( "WARNING: Vision disabled but included in custom observation variables.")
                 obs_vars.remove( 'img')
             if vision and  'img' not in obs_vars:
-                pring( "WARNING: Vision enabled but not included in custom observation variables.")
+                warnings.warn("Vision enabled but not included in custom observation variables.")
+                # pring( "WARNING: Vision enabled but not included in custom observation variables.")
                 obs_vars.append( 'img')
 
             self.obs_vars = obs_vars
@@ -199,10 +224,14 @@ class TorcsEnv( gym.Env):
 
         # Internal time tracker for
         # The episode will end when the lap_limiter is reached
-        # To put it simply if you want env to stap after 3 laps, set this to 4
+        # To put it simply if you want env to stop after 3 laps, set this to 4
         # Make sure to run torcs itself for more than 3 laps too, otherwise,
         # before terminating the episode
+        if lap_limiter is None and step_limiter is None:
+            warnings.warn('Set value for lap_limiter or step_limiter.')
         self.lap_limiter = lap_limiter
+        self.step_limiter = step_limiter
+
         self.rec_episode_limit = rec_episode_limit
         self.rec_timestep_limit = rec_timestep_limit
         self.rec_index = rec_index
@@ -275,7 +304,7 @@ class TorcsEnv( gym.Env):
 
             # Check for random config file folder and create if not exists
             randconf_dir = os.path.join(  os.path.dirname(os.path.abspath(__file__)),
-                "rand_raceconfigs")
+                "randconf_dir")
             if not os.path.isdir(randconf_dir):
                 os.mkdir(randconf_dir)
             randconf_filename = "agent_randfixed_%d" % agent_init
@@ -318,7 +347,7 @@ class TorcsEnv( gym.Env):
                     bot_section.append( ET.Element( "attnum",
                         { "name": "idx", "val": "%d" % (2+bot_idx) }))
                     bot_section.append( ET.Element( "attstr",
-                        { "name": "module", "val": "fixed" }))
+                        { "name": "module", "val": "fix" }))
                     driver_section.append( bot_section)
                     driver_section.append( ET.Element( "attnum",
                         { "name": "initdist_%d" % (bot_idx+1), "val": "%d" % bot_init_pos}))
@@ -414,34 +443,39 @@ class TorcsEnv( gym.Env):
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        #progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])
-        progress = sp*np.cos(obs['angle'])
+        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])*0.3
+        # progress = sp*np.cos(obs['angle'])
         reward = progress
 
+        terminate_reason = ''
         # collision detection
         if obs['damage'] - obs_pre['damage'] > 0:
             reward = - 1
-            episode_terminate = True
+            terminate_reason = 'Collision'
             client.R.d['meta'] = True
 
         # Termination judgement #########################
-        episode_terminate = False
         if track.min() < 0:  # Episode is terminated if the car is out of track
             reward = - 1
-            episode_terminate = True
+            terminate_reason = 'Out of track'
             client.R.d['meta'] = True
 
-        if self.terminal_judge_start < self.time_step: # Episode terminates if the progress of agent is small
-            if progress < self.termination_limit_progress:
-                episode_terminate = True
+        if self.step_limiter <= self.time_step+1:  # Episode terminates if finish all step
+            terminate_reason = 'Finish All Steps'
+            client.R.d['meta'] = True
+
+        if self.terminal_judge_start <= self.time_step+1: # Episode terminates if the progress of agent is small
+            vel = sp*np.cos(obs['angle'])
+            if vel < self.termination_limit_progress:
+                terminate_reason = 'Velocity is too Small'
                 client.R.d['meta'] = True
 
         if np.cos(obs['angle']) < 0: # Episode is terminated if the agent runs backward
-            episode_terminate = True
+            terminate_reason = 'Run Backward'
             client.R.d['meta'] = True
 
-        if int( obs["lap"]) > self.lap_limiter:
-            episode_terminate = True
+        if self.lap_limiter is not None and int( obs["lap"]) > self.lap_limiter:
+            terminate_reason = 'Finish Lap'
             client.R.d['meta'] = True
 
         if client.R.d['meta'] is True: # Send a reset signal
@@ -450,7 +484,8 @@ class TorcsEnv( gym.Env):
 
         self.time_step += 1
 
-        return self.get_obs(), reward, client.R.d['meta'], {}
+        return self.get_obs(), reward, client.R.d['meta'], {'terminate_reason': terminate_reason,
+                                                            'finished_lap': obs['lap']-1}
 
     def reset(self, relaunch=False):
         #print("Reset")
@@ -464,7 +499,7 @@ class TorcsEnv( gym.Env):
             if relaunch is True or self.reset_ep_count % self.hard_reset_interval == 0:
                 self.reset_torcs()
                 self.reset_ep_count = 1
-                print("### TORCS is RELAUNCHED ###")
+                #1 print("### TORCS is RELAUNCHED ###")
 
         # Modify here if you use multiple tracks in the environment
         ### dosssman: Pass existing process id and race config path
@@ -522,7 +557,7 @@ class TorcsEnv( gym.Env):
         return self.observation
 
     def reset_torcs(self):
-        print( "Process PID: ", self.torcs_process_id)
+        #1 print( "Process PID: ", self.torcs_process_id)
         if self.torcs_process_id is not None:
             try:
                 p = psutil.Process( self.torcs_process_id)
@@ -613,3 +648,13 @@ class TorcsEnv( gym.Env):
             return self.obs_preprocess_fn( dict_obs)
 
         return dict_obs
+
+if __name__ == '__main__':
+    race_config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "raceconfigs/new.xml")
+    env = TorcsEnv(race_config_path=race_config_path, randomisation=True)
+    o, r, done = env.reset(), 0., False
+    while not done:
+        action = np.tanh(np.random.randn(env.action_space.shape[0]))
+        o, r, done, _ = env.step(action)
+
+    env.close()

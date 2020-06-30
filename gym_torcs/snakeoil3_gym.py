@@ -134,7 +134,7 @@ class Client():
         self.stage= 3 # 0=Warm-up, 1=Qualifying 2=Race, 3=unknown <Default=3>
         self.debug= False
         self.maxSteps= 1000000000  # 50steps/second
-        self.parse_the_command_line()
+        # self.parse_the_command_line()
         if H: self.host= H
         if p: self.port= p
         if i: self.sid= i
@@ -191,8 +191,8 @@ class Client():
                 sockdata,addr= self.so.recvfrom(data_size)
                 sockdata = sockdata.decode('utf-8')
             except socket.error as emsg:
-                print("Waiting for server on %d............" % self.port)
-                print("Count Down : " + str(n_fail))
+                #1 print("Waiting for server on %d............" % self.port)
+                #1 print("Count Down : " + str(n_fail))
                 if n_fail < 0:
                     #Kill eventually existing process of the current TorcsEnv process
                     if self.torcs_process_id is not None:
@@ -260,7 +260,7 @@ class Client():
 
             identify = '***identified***'
             if identify in sockdata:
-                print("Client connected on %d.............." % self.port)
+                #1 print("Client connected on %d.............." % self.port)
                 break
 
     def parse_the_command_line(self):
