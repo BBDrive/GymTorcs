@@ -443,7 +443,7 @@ class TorcsEnv( gym.Env):
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])*0.3
+        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])*0.5
         # progress = sp*np.cos(obs['angle'])
         reward = progress
 
@@ -460,7 +460,7 @@ class TorcsEnv( gym.Env):
             terminate_reason = 'Out of track'
             client.R.d['meta'] = True
 
-        if self.step_limiter <= self.time_step+1:  # Episode terminates if finish all step
+        if self.step_limiter is not None and self.step_limiter <= self.time_step+1:  # Episode terminates if finish all step
             terminate_reason = 'Finish All Steps'
             client.R.d['meta'] = True
 
